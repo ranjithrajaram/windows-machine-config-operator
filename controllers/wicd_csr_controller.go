@@ -91,34 +91,19 @@ func (r *wicdCSRReconciler) isWICDCSR(obj runtime.Object) bool {
 	return r.isWICDServiceAccount(csr) || r.isWICDCertificateIdentity(csr)
 }
 
-// isPendingCSR checks if this CSR is pending (neither approved nor denied)
-func isPendingCSR(obj runtime.Object) bool {
-	csr, ok := obj.(*certificatesv1.CertificateSigningRequest)
-	if !ok {
-		return false
-	}
-	for _, condition := range csr.Status.Conditions {
-		if condition.Type == certificatesv1.CertificateApproved || condition.Type == certificatesv1.CertificateDenied {
-			return false
-		}
-	}
-	return true
-}
-
 // SetupWithManager sets up the controller with the Manager
 func (r *wicdCSRReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	wicdCSRPredicate := predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
-			return r.isWICDCSR(e.Object) && isPendingCSR(e.Object)
+			return r.isWICDCSR(e.Object) && pendingCSRFilter(e.Object)
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			return r.isWICDCSR(e.ObjectNew) && isPendingCSR(e.ObjectNew)
+			return r.isWICDCSR(e.ObjectNew) && pendingCSRFilter(e.ObjectNew)
 		},
 		GenericFunc: func(e event.GenericEvent) bool {
-			return r.isWICDCSR(e.Object) && isPendingCSR(e.Object)
+			return r.isWICDCSR(e.Object) && pendingCSRFilter(e.Object)
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
-			// We don't need to handle delete events for CSRs
 			return false
 		},
 	}
@@ -150,7 +135,7 @@ func (r *wicdCSRReconciler) Reconcile(ctx context.Context, req reconcile.Request
 	// If a CSR is approved/denied after being added to the queue, but before we reconcile it,
 	// trying to approve it again will result in an error and cause a loop.
 	// Return early if the CSR has been approved/denied externally.
-	if !isPendingCSR(csr) {
+	if !isPending(csr) {
 		r.log.Info("CSR is already approved/denied", "Name", csr.Name)
 		return reconcile.Result{}, nil
 	}
@@ -178,7 +163,7 @@ func (r *wicdCSRReconciler) isWICDServiceAccount(csr *certificatesv1.Certificate
 
 // isWICDCertificateIdentity checks if this CSR is from a WICD certificate-based identity
 func (r *wicdCSRReconciler) isWICDCertificateIdentity(csr *certificatesv1.CertificateSigningRequest) bool {
-	return strings.HasPrefix(csr.Spec.Username, rbac.WICDUserPrefix)
+	return strings.HasPrefix(csr.Spec.Username, rbac.WICDUserPrefix+":")
 }
 
 // approveCSR approves the certificate signing request using the proper UpdateApproval API

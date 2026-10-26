@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	configv1 "github.com/openshift/api/config/v1"
 	openshiftconfig "github.com/openshift/api/config/v1"
@@ -19,12 +20,15 @@ import (
 	monv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
+	certificatesv1 "k8s.io/api/certificates/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -208,8 +212,22 @@ func main() {
 	//       as we need to watch Nodes. A MultiNamespacedCache cannot be used at this point as it has issues working
 	//       with cluster scoped resources. Once those issues are resolved, it may be worth switching to using that
 	//       cache type.
+	// csrSyncPeriod defines how frequently the CSR informer resyncs. The resync fires synthetic Update events
+	// for CSRs already present in the informer cache, allowing both the wicd-csr and certificatesigningrequests
+	// controllers to re-enqueue cached CSRs whose controller enqueue was missed (e.g. due to a brief watch
+	// reconnect). It does not recover CSRs that were never admitted to the cache during a watch gap; those
+	// require an API-backed list. Scoped to CSRs only to avoid unnecessary reconcile load on Node, Machine,
+	// ConfigMap, and Secret controllers.
+	csrSyncPeriod := 10 * time.Minute
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&certificatesv1.CertificateSigningRequest{}: {
+					SyncPeriod: &csrSyncPeriod,
+				},
+			},
+		},
 		Metrics: metricsserver.Options{
 			BindAddress:    metricsAddr,
 			SecureServing:  true,
